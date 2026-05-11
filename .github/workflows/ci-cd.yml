@@ -43,38 +43,41 @@ jobs:
       - name: Start all containers
         run: |
           docker compose up -d
-          sleep 20
+          echo "Ожидаем старта сервисов..."
+          sleep 30
 
       - name: Check container status
         run: docker compose ps
 
       - name: Wait for backend to be ready
         run: |
-          for i in $(seq 1 20); do
-            if curl -sf http://localhost:80/api/health; then
-              echo "Backend готов"
+          echo "Ожидаем готовности backend..."
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/health || true)
+            echo "попытка $i/30, HTTP status: $STATUS"
+            if [ "$STATUS" = "200" ]; then
+              echo "Backend готов!"
               break
             fi
-            echo "попытка $i/20..."
-            sleep 3
+            sleep 5
           done
 
       - name: Health check
         run: |
-          RESPONSE=$(curl -sf http://localhost:80/api/health)
+          RESPONSE=$(curl -sf http://localhost:8080/api/health)
           echo "Response: $RESPONSE"
           echo "$RESPONSE" | grep -q '"ok"'
           echo "Health check OK"
 
       - name: GET /api/tasks
         run: |
-          RESPONSE=$(curl -sf http://localhost:80/api/tasks)
+          RESPONSE=$(curl -sf http://localhost:8080/api/tasks)
           echo "Response: $RESPONSE"
           echo "GET tasks OK"
 
       - name: POST /api/tasks
         run: |
-          RESPONSE=$(curl -sf -X POST http://localhost:80/api/tasks \
+          RESPONSE=$(curl -sf -X POST http://localhost:8080/api/tasks \
             -H "Content-Type: application/json" \
             -d '{"title":"CI Test Task","description":"Created by GitHub Actions","status":"pending"}')
           echo "Response: $RESPONSE"
@@ -85,14 +88,14 @@ jobs:
 
       - name: GET /api/tasks by id
         run: |
-          RESPONSE=$(curl -sf http://localhost:80/api/tasks/$TASK_ID)
+          RESPONSE=$(curl -sf http://localhost:8080/api/tasks/$TASK_ID)
           echo "Response: $RESPONSE"
           echo "$RESPONSE" | grep -q '"CI Test Task"'
           echo "GET task by id OK"
 
       - name: PUT /api/tasks by id
         run: |
-          RESPONSE=$(curl -sf -X PUT http://localhost:80/api/tasks/$TASK_ID \
+          RESPONSE=$(curl -sf -X PUT http://localhost:8080/api/tasks/$TASK_ID \
             -H "Content-Type: application/json" \
             -d '{"status":"done"}')
           echo "Response: $RESPONSE"
@@ -101,13 +104,13 @@ jobs:
 
       - name: DELETE /api/tasks by id
         run: |
-          RESPONSE=$(curl -sf -X DELETE http://localhost:80/api/tasks/$TASK_ID)
+          RESPONSE=$(curl -sf -X DELETE http://localhost:8080/api/tasks/$TASK_ID)
           echo "Response: $RESPONSE"
           echo "DELETE task OK"
 
       - name: Frontend available
         run: |
-          curl -sf http://localhost:80/ | grep -q "Todo List"
+          curl -sf http://localhost:8080/ | grep -q "Todo List"
           echo "Frontend OK"
 
       - name: Show logs on failure
