@@ -6,168 +6,140 @@ on:
   pull_request:
     branches: [ main, master ]
 
-env:
-  DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-  BACKEND_IMAGE:  ${{ secrets.DOCKERHUB_USERNAME }}/todo-backend
-  FRONTEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/todo-frontend
-
 jobs:
 
-  # ── 1. Сборка и тестирование ──────────────────────────────────────────────
   build-and-test:
     name: Build · Test · Push
     runs-on: ubuntu-latest
 
     steps:
 
-      # 1.1 Клонируем репозиторий
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 1.2 Настраиваем Docker Buildx (для кэширования слоёв)
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 1.3 Логинимся в Docker Hub
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 1.4 Собираем образы
       - name: Build backend image
         run: |
           docker build \
-            --tag ${{ env.BACKEND_IMAGE }}:${{ github.sha }} \
-            --tag ${{ env.BACKEND_IMAGE }}:latest \
+            --tag ${{ secrets.DOCKERHUB_USERNAME }}/todo-backend:${{ github.sha }} \
+            --tag ${{ secrets.DOCKERHUB_USERNAME }}/todo-backend:latest \
             ./backend
 
       - name: Build frontend image
         run: |
           docker build \
-            --tag ${{ env.FRONTEND_IMAGE }}:${{ github.sha }} \
-            --tag ${{ env.FRONTEND_IMAGE }}:latest \
+            --tag ${{ secrets.DOCKERHUB_USERNAME }}/todo-frontend:${{ github.sha }} \
+            --tag ${{ secrets.DOCKERHUB_USERNAME }}/todo-frontend:latest \
             ./frontend
 
-      # 1.5 Поднимаем все контейнеры
       - name: Start all containers
         run: |
           docker compose up -d
-          echo "⏳ Ожидаем старта сервисов..."
-          sleep 15
+          echo "Ожидаем старта сервисов..."
+          sleep 20
 
-      # 1.6 Проверяем статус контейнеров
       - name: Check container status
         run: docker compose ps
 
-      # 1.7 Ждём, пока backend станет доступен
       - name: Wait for backend to be ready
         run: |
-          echo "⏳ Ожидаем готовности backend..."
           for i in $(seq 1 20); do
-            if curl -sf http://localhost/api/health; then
-              echo "✅ Backend готов"
+            if curl -sf http://localhost:80/api/health; then
+              echo "Backend готов"
               break
             fi
-            echo "  попытка $i/20..."
+            echo "попытка $i/20..."
             sleep 3
           done
 
-      # 1.8 HTTP-тесты через curl
-      - name: Health check — GET /api/health
+      - name: Health check
         run: |
-          RESPONSE=$(curl -sf http://localhost/api/health)
+          RESPONSE=$(curl -sf http://localhost:80/api/health)
           echo "Response: $RESPONSE"
           echo "$RESPONSE" | grep -q '"ok"'
-          echo "✅ Health check пройден"
+          echo "Health check OK"
 
-      - name: Test — GET /api/tasks (пустой список)
+      - name: GET /api/tasks
         run: |
-          RESPONSE=$(curl -sf http://localhost/api/tasks)
+          RESPONSE=$(curl -sf http://localhost:80/api/tasks)
           echo "Response: $RESPONSE"
-          echo "✅ GET /api/tasks — OK"
+          echo "GET tasks OK"
 
-      - name: Test — POST /api/tasks (создать задачу)
+      - name: POST /api/tasks
         run: |
-          RESPONSE=$(curl -sf -X POST http://localhost/api/tasks \
+          RESPONSE=$(curl -sf -X POST http://localhost:80/api/tasks \
             -H "Content-Type: application/json" \
             -d '{"title":"CI Test Task","description":"Created by GitHub Actions","status":"pending"}')
           echo "Response: $RESPONSE"
           echo "$RESPONSE" | grep -q '"CI Test Task"'
           TASK_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
           echo "TASK_ID=$TASK_ID" >> $GITHUB_ENV
-          echo "✅ POST /api/tasks — задача создана, id=$TASK_ID"
+          echo "POST task OK, id=$TASK_ID"
 
-      - name: Test — GET /api/tasks/<id> (получить задачу)
+      - name: GET /api/tasks by id
         run: |
-          RESPONSE=$(curl -sf http://localhost/api/tasks/${{ env.TASK_ID }})
+          RESPONSE=$(curl -sf http://localhost:80/api/tasks/$TASK_ID)
           echo "Response: $RESPONSE"
           echo "$RESPONSE" | grep -q '"CI Test Task"'
-          echo "✅ GET /api/tasks/${{ env.TASK_ID }} — OK"
+          echo "GET task by id OK"
 
-      - name: Test — PUT /api/tasks/<id> (обновить задачу)
+      - name: PUT /api/tasks by id
         run: |
-          RESPONSE=$(curl -sf -X PUT http://localhost/api/tasks/${{ env.TASK_ID }} \
+          RESPONSE=$(curl -sf -X PUT http://localhost:80/api/tasks/$TASK_ID \
             -H "Content-Type: application/json" \
             -d '{"status":"done"}')
           echo "Response: $RESPONSE"
           echo "$RESPONSE" | grep -q '"done"'
-          echo "✅ PUT /api/tasks/${{ env.TASK_ID }} — статус обновлён"
+          echo "PUT task OK"
 
-      - name: Test — DELETE /api/tasks/<id> (удалить задачу)
+      - name: DELETE /api/tasks by id
         run: |
-          RESPONSE=$(curl -sf -X DELETE http://localhost/api/tasks/${{ env.TASK_ID }})
+          RESPONSE=$(curl -sf -X DELETE http://localhost:80/api/tasks/$TASK_ID)
           echo "Response: $RESPONSE"
-          echo "$RESPONSE" | grep -q 'deleted\|удален'
-          echo "✅ DELETE /api/tasks/${{ env.TASK_ID }} — OK"
+          echo "DELETE task OK"
 
-      - name: Test — Frontend доступен
+      - name: Frontend available
         run: |
-          curl -sf http://localhost/ | grep -q "Todo List"
-          echo "✅ Фронтенд загружается"
+          curl -sf http://localhost:80/ | grep -q "Todo List"
+          echo "Frontend OK"
 
-      # 1.9 Логи при провале (для отладки)
       - name: Show logs on failure
         if: failure()
-        run: docker compose logs --tail=50
+        run: docker compose logs --tail=80
 
-      # 1.10 Останавливаем и очищаем контейнеры
-      - name: Stop and clean up containers
+      - name: Stop containers
         if: always()
-        run: |
-          docker compose down -v --remove-orphans
-          echo "✅ Контейнеры остановлены"
+        run: docker compose down -v --remove-orphans
 
-      # 1.11 Очищаем неиспользуемые образы
-      - name: Clean up dangling images
+      - name: Clean up images
         if: always()
-        run: |
-          docker image prune -f
-          echo "✅ Лишние образы удалены"
+        run: docker image prune -f
 
-      # 1.12 Пушим образы в Docker Hub (только при push в main/master)
-      - name: Push backend image to Docker Hub
+      - name: Push backend to Docker Hub
         if: github.event_name == 'push'
         run: |
-          docker push ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
-          docker push ${{ env.BACKEND_IMAGE }}:latest
-          echo "✅ Backend образ запушен"
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/todo-backend:${{ github.sha }}
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/todo-backend:latest
 
-      - name: Push frontend image to Docker Hub
+      - name: Push frontend to Docker Hub
         if: github.event_name == 'push'
         run: |
-          docker push ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
-          docker push ${{ env.FRONTEND_IMAGE }}:latest
-          echo "✅ Frontend образ запушен"
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/todo-frontend:${{ github.sha }}
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/todo-frontend:latest
 
-      # 1.13 Сводка
       - name: Summary
         if: always()
         run: |
-          echo "## 🚀 CI/CD Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Образ | Тег |" >> $GITHUB_STEP_SUMMARY
+          echo "## CI/CD Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | Tag |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|-----|" >> $GITHUB_STEP_SUMMARY
-          echo "| \`${{ env.BACKEND_IMAGE }}\` | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| \`${{ env.FRONTEND_IMAGE }}\` | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| todo-backend | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| todo-frontend | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
