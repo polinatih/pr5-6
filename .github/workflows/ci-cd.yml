@@ -29,21 +29,20 @@ jobs:
       - name: Build backend image
         run: |
           docker build \
-            --tag ${{ secrets.DOCKERHUB_USERNAME }}/todo-backend:${{ github.sha }} \
-            --tag ${{ secrets.DOCKERHUB_USERNAME }}/todo-backend:latest \
+            --tag polinatih/todo-backend:${{ github.sha }} \
+            --tag polinatih/todo-backend:latest \
             ./backend
 
       - name: Build frontend image
         run: |
           docker build \
-            --tag ${{ secrets.DOCKERHUB_USERNAME }}/todo-frontend:${{ github.sha }} \
-            --tag ${{ secrets.DOCKERHUB_USERNAME }}/todo-frontend:latest \
+            --tag polinatih/todo-frontend:${{ github.sha }} \
+            --tag polinatih/todo-frontend:latest \
             ./frontend
 
       - name: Start all containers
         run: |
           docker compose up -d
-          echo "Ожидаем старта сервисов..."
           sleep 20
 
       - name: Check container status
@@ -126,14 +125,14 @@ jobs:
       - name: Push backend to Docker Hub
         if: github.event_name == 'push'
         run: |
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/todo-backend:${{ github.sha }}
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/todo-backend:latest
+          docker push polinatih/todo-backend:${{ github.sha }}
+          docker push polinatih/todo-backend:latest
 
       - name: Push frontend to Docker Hub
         if: github.event_name == 'push'
         run: |
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/todo-frontend:${{ github.sha }}
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/todo-frontend:latest
+          docker push polinatih/todo-frontend:${{ github.sha }}
+          docker push polinatih/todo-frontend:latest
 
       - name: Summary
         if: always()
@@ -141,5 +140,5 @@ jobs:
           echo "## CI/CD Summary" >> $GITHUB_STEP_SUMMARY
           echo "| Image | Tag |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|-----|" >> $GITHUB_STEP_SUMMARY
-          echo "| todo-backend | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| todo-frontend | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| polinatih/todo-backend | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| polinatih/todo-frontend | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
