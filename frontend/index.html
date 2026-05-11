@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Todo List — Real-time</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, sans-serif;
+      background: #f1f5f9;
+      color: #1e293b;
+      padding: 32px 16px;
+    }
+
+    h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 4px; }
+    .sub { color: #64748b; font-size: .85rem; margin-bottom: 28px; }
+
+    .wrap { max-width: 900px; margin: 0 auto; }
+
+    /* ── WebSocket статус ── */
+    .ws-bar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 16px; border-radius: 8px; margin-bottom: 20px;
+      font-size: .85rem; font-weight: 600;
+      transition: background .3s;
+    }
+    .ws-bar.connected    { background: #dcfce7; color: #166534; }
+    .ws-bar.disconnected { background: #fee2e2; color: #991b1b; }
+    .ws-bar.connecting   { background: #fef9c3; color: #92400e; }
+
+    .ws-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .connected    .ws-dot { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
+    .disconnected .ws-dot { background: #ef4444; }
+    .connecting   .ws-dot { background: #f59e0b; animation: pulse 1s infinite; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; } 50% { opacity: .4; }
+    }
+
+    /* ── Уведомление о real-time событии ── */
+    .rt-log {
+      font-size: .78rem; color: #64748b; margin-left: auto;
+      font-weight: 400; font-style: italic;
+    }
+
+    /* ── Карточки ── */
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+      padding: 20px 24px;
+      margin-bottom: 20px;
+    }
+    .card-title {
+      font-size: .72rem; text-transform: uppercase;
+      letter-spacing: 1px; color: #94a3b8;
+      margin-bottom: 14px; font-weight: 600;
+    }
+
+    input, textarea, select {
+      font: inherit; font-size: .9rem;
+      border: 1px solid #e2e8f0; border-radius: 7px;
+      padding: 8px 12px; background: #f8fafc; color: #1e293b;
+      outline: none; transition: border-color .15s, box-shadow .15s; width: 100%;
+    }
+    input:focus, textarea:focus, select:focus {
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59,130,246,.12);
+      background: #fff;
+    }
+    textarea { resize: vertical; min-height: 64px; }
+
+    .row { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; }
+    .row input, .row select { flex: 1; min-width: 130px; }
+
+    .btn {
+      font: inherit; font-size: .85rem; font-weight: 500;
+      padding: 8px 18px; border: none; border-radius: 7px;
+      cursor: pointer; transition: filter .15s; white-space: nowrap;
+    }
+    .btn:hover { filter: brightness(.92); }
+    .btn-blue  { background: #3b82f6; color: #fff; }
+    .btn-red   { background: #ef4444; color: #fff; }
+    .btn-amber { background: #f59e0b; color: #fff; }
+    .btn-ghost { background: #f1f5f9; color: #475569; }
+    .btn-sm    { padding: 5px 11px; font-size: .78rem; }
+
+    /* ── Таблица ── */
+    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    th {
+      text-align: left; font-size: .7rem; text-transform: uppercase;
+      letter-spacing: .8px; color: #94a3b8; padding: 6px 12px;
+      border-bottom: 1px solid #f1f5f9;
+    }
+    td { padding: 11px 12px; border-bottom: 1px solid #f8fafc; vertical-align: middle; }
+    tr:last-child td { border: none; }
+
+    /* анимация для новых/изменённых строк */
+    .task-row { transition: background .4s; }
+    .task-row.flash { background: #fffbeb !important; }
+
+    .badge {
+      display: inline-block; padding: 2px 10px;
+      border-radius: 20px; font-size: .73rem; font-weight: 600;
+    }
+    .badge-pending { background: #fef9c3; color: #92400e; }
+    .badge-done    { background: #dcfce7; color: #166534; }
+
+    .actions { display: flex; gap: 5px; }
+
+    /* ── Модалки ── */
+    .overlay {
+      display: flex; align-items: center; justify-content: center;
+      position: fixed; inset: 0; background: rgba(0,0,0,.3); z-index: 50;
+    }
+    .modal {
+      background: #fff; border-radius: 12px; padding: 28px;
+      width: 100%; max-width: 460px;
+      box-shadow: 0 8px 32px rgba(0,0,0,.18);
+    }
+    .modal h2 { font-size: 1.05rem; margin-bottom: 16px; }
+    .field { margin-bottom: 12px; }
+    .field label { display: block; font-size: .78rem; color: #64748b; margin-bottom: 4px; }
+    .modal-btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+
+    /* ── Email ── */
+    .tabs { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+    .tab {
+      font: inherit; font-size: .82rem; padding: 6px 14px;
+      border: 1px solid #e2e8f0; border-radius: 7px;
+      background: #f8fafc; cursor: pointer; transition: all .15s;
+    }
+    .tab.active { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+
+    .result {
+      margin-top: 12px; padding: 12px; border-radius: 7px;
+      font-size: .8rem; white-space: pre-wrap;
+      max-height: 200px; overflow-y: auto;
+    }
+    .result-ok  { background: #f0fdf4; border: 1px solid #86efac; color: #166534; }
+    .result-err { background: #fef2f2; border: 1px solid #fca5a5; color: #dc2626; }
+
+    /* ── Toast ── */
+    .toast {
+      position: fixed; bottom: 24px; right: 24px;
+      background: #1e293b; color: #fff;
+      padding: 10px 20px; border-radius: 8px; font-size: .85rem; z-index: 100;
+      animation: slideUp .25s ease;
+    }
+    @keyframes slideUp {
+      from { transform: translateY(12px); opacity: 0; }
+      to   { transform: translateY(0);    opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+<div class="wrap">
+
+  <h1>📋 Todo List</h1>
+  <div class="sub">Flask · PostgreSQL · Docker · Vue 3 · WebSocket (Socket.IO)</div>
+
+  <!-- ── WebSocket статус ── -->
+  <div class="ws-bar" :class="wsStatus">
+    <div class="ws-dot"></div>
+    <span v-if="wsStatus === 'connected'">WebSocket подключён — изменения синхронизируются в реальном времени</span>
+    <span v-else-if="wsStatus === 'connecting'">Подключение к WebSocket...</span>
+    <span v-else>WebSocket отключён — нет real-time синхронизации</span>
+    <span class="rt-log" v-if="lastEvent">{{ lastEvent }}</span>
+  </div>
+
+  <!-- ── Добавить задачу ── -->
+  <div class="card">
+    <div class="card-title">Новая задача</div>
+    <div class="row" style="margin-bottom:8px">
+      <input v-model="form.title" placeholder="Название задачи..." @keyup.enter="createTask" />
+      <select v-model="form.status" style="max-width:130px">
+        <option value="pending">pending</option>
+        <option value="done">done</option>
+      </select>
+      <button class="btn btn-blue" style="flex-shrink:0" @click="createTask">+ Добавить</button>
+    </div>
+    <textarea v-model="form.description" placeholder="Описание (необязательно)"></textarea>
+  </div>
+
+  <!-- ── Список задач ── -->
+  <div class="card">
+    <div class="card-title">Задачи ({{ tasks.length }})</div>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th><th>Название</th><th>Статус</th>
+          <th>Создано</th><th>Действия</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-if="!tasks.length">
+          <td colspan="5" style="text-align:center;color:#94a3b8;padding:24px">Задач нет</td>
+        </tr>
+        <tr
+          v-for="t in tasks"
+          :key="t.id"
+          class="task-row"
+          :class="{ flash: flashIds.has(t.id) }"
+        >
+          <td style="color:#94a3b8;font-weight:600">#{{ t.id }}</td>
+          <td>{{ t.title }}</td>
+          <td><span class="badge" :class="'badge-' + t.status">{{ t.status }}</span></td>
+          <td style="color:#94a3b8;font-size:.8rem">{{ fmtDate(t.created_at) }}</td>
+          <td>
+            <div class="actions">
+              <button class="btn btn-ghost btn-sm" @click="showDetail(t)">👁</button>
+              <button class="btn btn-amber btn-sm" @click="openEdit(t)">✏️</button>
+              <button class="btn btn-red btn-sm" @click="deleteTask(t.id)">🗑</button>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ── Email ── -->
+  <div class="card">
+    <div class="card-title">Почта</div>
+    <div class="tabs">
+      <button class="tab" :class="{active: tab==='smtp'}" @click="tab='smtp'">SMTP — отправить</button>
+      <button class="tab" :class="{active: tab==='imap'}" @click="tab='imap'">IMAP — входящие</button>
+      <button class="tab" :class="{active: tab==='pop3'}" @click="tab='pop3'">POP3 — входящие</button>
+    </div>
+
+    <div v-if="tab==='smtp'">
+      <div class="field"><label>Кому</label><input v-model="email.to" type="email" placeholder="recipient@example.com" /></div>
+      <div class="field"><label>Тема</label><input v-model="email.subject" /></div>
+      <div class="field"><label>Текст</label><textarea v-model="email.body"></textarea></div>
+      <div class="row">
+        <button class="btn btn-blue" @click="sendEmail">Отправить (SMTP)</button>
+        <button class="btn btn-ghost" @click="fillTasks">📋 Вставить задачи</button>
+      </div>
+      <div v-if="email.result" class="result" :class="email.result.success ? 'result-ok' : 'result-err'">{{ JSON.stringify(email.result, null, 2) }}</div>
+    </div>
+
+    <div v-if="tab==='imap'">
+      <p style="font-size:.85rem;color:#64748b;margin-bottom:12px">IMAP4 SSL — последние 5 писем из INBOX.</p>
+      <button class="btn btn-amber" @click="checkImap">Проверить IMAP</button>
+      <div v-if="imap.result" class="result" :class="imap.result.success ? 'result-ok' : 'result-err'">{{ JSON.stringify(imap.result, null, 2) }}</div>
+    </div>
+
+    <div v-if="tab==='pop3'">
+      <p style="font-size:.85rem;color:#64748b;margin-bottom:12px">POP3 SSL — последние 5 писем.</p>
+      <button class="btn btn-amber" @click="checkPop3">Проверить POP3</button>
+      <div v-if="pop3.result" class="result" :class="pop3.result.success ? 'result-ok' : 'result-err'">{{ JSON.stringify(pop3.result, null, 2) }}</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Edit modal ── -->
+<div class="overlay" v-if="editModal.open">
+  <div class="modal">
+    <h2>✏️ Редактировать задачу</h2>
+    <div class="field"><label>Название</label><input v-model="editModal.title" /></div>
+    <div class="field"><label>Описание</label><textarea v-model="editModal.description"></textarea></div>
+    <div class="field"><label>Статус</label>
+      <select v-model="editModal.status">
+        <option value="pending">pending</option>
+        <option value="done">done</option>
+      </select>
+    </div>
+    <div class="modal-btns">
+      <button class="btn btn-ghost" @click="editModal.open=false">Отмена</button>
+      <button class="btn btn-blue" @click="saveEdit">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Detail modal ── -->
+<div class="overlay" v-if="detail.open">
+  <div class="modal">
+    <h2>🔍 Задача #{{ detail.id }}</h2>
+    <div class="field"><label>Название</label><div>{{ detail.title }}</div></div>
+    <div class="field"><label>Описание</label><div>{{ detail.description || '—' }}</div></div>
+    <div class="field"><label>Статус</label><span class="badge" :class="'badge-'+detail.status">{{ detail.status }}</span></div>
+    <div class="field"><label>Создано</label><div>{{ fmtDate(detail.created_at) }}</div></div>
+    <div class="modal-btns">
+      <button class="btn btn-ghost" @click="detail.open=false">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Toast ── -->
+<div class="toast" v-if="toastMsg">{{ toastMsg }}</div>
+
+</div>
+
+<script>
+const { createApp, ref, reactive, onMounted, onUnmounted } = Vue;
+
+createApp({
+  setup() {
+    const API = '/api';
+    const tasks = ref([]);
+    const tab = ref('smtp');
+    const toastMsg = ref('');
+    const wsStatus = ref('connecting');
+    const lastEvent = ref('');
+    const flashIds = reactive(new Set());
+
+    const form = reactive({ title: '', description: '', status: 'pending' });
+    const editModal = reactive({ open: false, id: null, title: '', description: '', status: '' });
+    const detail = reactive({ open: false, id: null, title: '', description: '', status: '', created_at: '' });
+    const email = reactive({ to: '', subject: 'Отчёт по задачам', body: '', result: null });
+    const imap = reactive({ result: null });
+    const pop3 = reactive({ result: null });
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+    const toast = msg => { toastMsg.value = msg; setTimeout(() => toastMsg.value = '', 2500); };
+    const fmtDate = iso => new Date(iso).toLocaleString('ru-RU');
+
+    const flashRow = id => {
+      flashIds.add(id);
+      setTimeout(() => flashIds.delete(id), 800);
+    };
+
+    const setLastEvent = msg => {
+      const t = new Date().toLocaleTimeString('ru-RU');
+      lastEvent.value = `[${t}] ${msg}`;
+    };
+
+    // ── WebSocket (Socket.IO) ─────────────────────────────────────────────────
+    // Подключаемся к тому же хосту, но через путь /socket.io
+    const socket = io({ path: '/socket.io', transports: ['websocket', 'polling'] });
+
+    socket.on('connect', () => {
+      wsStatus.value = 'connected';
+      console.log('[WS] Подключён, sid:', socket.id);
+    });
+
+    socket.on('disconnect', () => {
+      wsStatus.value = 'disconnected';
+      console.log('[WS] Отключён');
+    });
+
+    // Инициализация: получаем весь список при подключении
+    socket.on('init', data => {
+      tasks.value = data;
+      setLastEvent('Получен список задач при подключении');
+    });
+
+    // Новая задача от другого клиента
+    socket.on('task_created', task => {
+      // Добавляем только если ещё нет (мы сами могли создать через REST)
+      if (!tasks.value.find(t => t.id === task.id)) {
+        tasks.value.unshift(task);
+      }
+      flashRow(task.id);
+      setLastEvent(`Добавлена задача #${task.id}: "${task.title}"`);
+      toast(`🆕 Новая задача от другого пользователя: "${task.title}"`);
+    });
+
+    // Задача обновлена другим клиентом
+    socket.on('task_updated', task => {
+      const idx = tasks.value.findIndex(t => t.id === task.id);
+      if (idx !== -1) tasks.value[idx] = task;
+      flashRow(task.id);
+      setLastEvent(`Обновлена задача #${task.id}: "${task.title}"`);
+      toast(`✏️ Задача #${task.id} обновлена`);
+    });
+
+    // Задача удалена другим клиентом
+    socket.on('task_deleted', ({ id }) => {
+      tasks.value = tasks.value.filter(t => t.id !== id);
+      setLastEvent(`Удалена задача #${id}`);
+      toast(`🗑 Задача #${id} удалена другим пользователем`);
+    });
+
+    onUnmounted(() => socket.disconnect());
+
+    // ── REST API ──────────────────────────────────────────────────────────────
+    const loadTasks = async () => {
+      const r = await fetch(`${API}/tasks`);
+      tasks.value = await r.json();
+    };
+
+    const createTask = async () => {
+      if (!form.title.trim()) return toast('Введите название');
+      const r = await fetch(`${API}/tasks`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form })
+      });
+      const task = await r.json();
+      // Добавляем локально (WS broadcast тоже придёт, но с проверкой дубликата)
+      if (!tasks.value.find(t => t.id === task.id)) {
+        tasks.value.unshift(task);
+      }
+      flashRow(task.id);
+      form.title = ''; form.description = '';
+      toast('Задача добавлена ✓');
+    };
+
+    const deleteTask = async id => {
+      if (!confirm(`Удалить задачу #${id}?`)) return;
+      await fetch(`${API}/tasks/${id}`, { method: 'DELETE' });
+      tasks.value = tasks.value.filter(t => t.id !== id);
+      toast('Удалено');
+    };
+
+    const openEdit = t => Object.assign(editModal, { open: true, ...t });
+
+    const saveEdit = async () => {
+      await fetch(`${API}/tasks/${editModal.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: editModal.title, description: editModal.description, status: editModal.status })
+      });
+      const idx = tasks.value.findIndex(t => t.id === editModal.id);
+      if (idx !== -1) tasks.value[idx] = { ...tasks.value[idx], ...editModal };
+      editModal.open = false;
+      toast('Сохранено ✓');
+    };
+
+    const showDetail = async t => {
+      const r = await fetch(`${API}/tasks/${t.id}`);
+      Object.assign(detail, await r.json(), { open: true });
+    };
+
+    // ── Email ─────────────────────────────────────────────────────────────────
+    const fillTasks = () => {
+      email.body = 'Список задач:\n\n' + tasks.value.map(t => `[#${t.id}] [${t.status}] ${t.title}`).join('\n');
+    };
+
+    const sendEmail = async () => {
+      if (!email.to) return toast('Укажите получателя');
+      const r = await fetch(`${API}/email/send`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: email.to, subject: email.subject, body: email.body })
+      });
+      email.result = await r.json();
+      toast(email.result.success ? 'Письмо отправлено ✓' : 'Ошибка');
+    };
+
+    const checkImap = async () => { const r = await fetch(`${API}/email/imap`); imap.result = await r.json(); };
+    const checkPop3 = async () => { const r = await fetch(`${API}/email/pop3`); pop3.result = await r.json(); };
+
+    onMounted(loadTasks);
+
+    return {
+      tasks, tab, toastMsg, wsStatus, lastEvent, flashIds,
+      form, editModal, detail, email, imap, pop3,
+      fmtDate, createTask, deleteTask, openEdit, saveEdit, showDetail,
+      fillTasks, sendEmail, checkImap, checkPop3
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>
